@@ -1,7 +1,6 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.jetbrains.kotlin.android)
-    `maven-publish`
 }
 
 android {
@@ -63,18 +62,6 @@ android {
     }
 }
 
-afterEvaluate {
-    publishing {
-        publications {
-            create<MavenPublication>("release") {
-                from(components["release"])
-                groupId = "io.coremetrics"
-                artifactId = "telemetry"
-                version = "3.1.7"
-            }
-        }
-    }
-}
 
 dependencies {
     implementation(libs.litert)
