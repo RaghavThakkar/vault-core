@@ -6,15 +6,6 @@ import java.security.MessageDigest
 
 object CryptoEngine {
 
-    init {
-        try {
-            System.loadLibrary("native-lib")
-        } catch (e: Exception) {
-            Timber.Forest.tag("CryptoEngine").e("Native library failed to load")
-        }
-    }
-
-    // ─── Utility ─────────────────────────────────────────────────────────────
 
     fun calculateAssetHash(context: Context, assetName: String): String {
         return try {

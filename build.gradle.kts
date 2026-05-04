@@ -35,6 +35,16 @@ android {
         }
     }
 
+    flavorDimensions += "default"
+    productFlavors {
+        create("dev") {
+            dimension = "default"
+        }
+        create("prod") {
+            dimension = "default"
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -62,6 +72,8 @@ android {
 dependencies {
     implementation(libs.litert)
     implementation(libs.timber)
+    implementation(libs.androidx.security.crypto)
+    implementation(libs.androidx.core.ktx)
 }
 
 kotlin {

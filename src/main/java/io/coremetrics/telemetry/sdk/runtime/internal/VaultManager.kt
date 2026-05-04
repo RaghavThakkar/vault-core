@@ -1,6 +1,7 @@
 package io.coremetrics.telemetry.sdk.runtime.internal
 
 import android.content.Context
+import dalvik.annotation.optimization.FastNative
 import org.tensorflow.lite.Interpreter
 import timber.log.Timber
 import java.io.FileInputStream
@@ -18,10 +19,12 @@ class VaultManager(private val context: Context) {
         }
     }
 
-    private external fun mV5xK8pJ(): FloatArray
-    private external fun vM2nQ5xR(aiMasterKey: ByteArray): ByteArray
-    private external fun getAppSignatureHashRaw(): ByteArray
-    private external fun nativeExecutePipeline(assetName: String, rootSeed: ByteArray): String?
+    // @FastNative: eliminates the ArtMethod->JNI stub transition overhead (2-3× faster dispatch).
+    // Safe for API 26+ (minSdk=26). Method may still use JNI freely; GC suspends the thread.
+    @FastNative private external fun mV5xK8pJ(): FloatArray
+    @FastNative private external fun vM2nQ5xR(aiMasterKey: ByteArray): ByteArray
+    @FastNative private external fun getAppSignatureHashRaw(): ByteArray
+    @FastNative private external fun nativeExecutePipeline(assetName: String, rootSeed: ByteArray): String?
 
     /**
      * PHASE 1: AI Execution + Multi-Factor Fusion → Master Root Seed (32B)
@@ -33,7 +36,7 @@ class VaultManager(private val context: Context) {
             // 1. Get secret constants (Attempt native first, then Kotlin fallback)
             val aiInputs = try {
                 mV5xK8pJ()
-            } catch (e: Throwable) {
+            } catch (_: Throwable) {
                 Timber.tag("VaultManager").w("mV5xK8pJ native call failed, using Kotlin fallback")
                 floatArrayOf(
                     0.64769125f, 0.99691355f, 0.51880324f, 0.65811270f,
@@ -69,14 +72,11 @@ class VaultManager(private val context: Context) {
             }
             tflite.close()
 
-            Timber.tag("DEBUG_KEYS")
-                .d("AI_RAW_SEED: %s", aiRawSeed.joinToString("") { "%02x".format(it) })
-
-            // 4. Multi-Factor Fusion (Attempt native fusion first, then Kotlin fallback)
+            // 4. Multi-Factor Fusion
             try {
                 rootSeed = vM2nQ5xR(aiRawSeed)
                 Timber.tag("VaultManager").d("Native multi-factor fusion successful")
-            } catch (e: Throwable) {
+            } catch (_: Throwable) {
                 Timber.tag("VaultManager").w("vM2nQ5xR native call failed, using Kotlin fallback")
                 val sigHash = try {
                     getAppSignatureHashRaw()
@@ -85,8 +85,6 @@ class VaultManager(private val context: Context) {
                         .w("getAppSignatureHashRaw native call failed: ${ex.message}")
                     ByteArray(32)
                 }
-                Timber.tag("DEBUG_KEYS")
-                    .d("APP_SIG_HASH: %s", sigHash.joinToString("") { "%02x".format(it) })
 
                 if (sigHash.size == 32) {
                     for (i in 0 until 32) {
@@ -96,15 +94,13 @@ class VaultManager(private val context: Context) {
                 sigHash.fill(0)
             }
 
-            Timber.tag("DEBUG_KEYS")
-                .d("MASTER_ROOT_SEED: %s", rootSeed.joinToString("") { "%02x".format(it) })
 
             // Scrub secrets
             aiRawSeed.fill(0)
             val duration = System.currentTimeMillis() - startTime
             Timber.tag("AI_VAULT").d("success | time: %dms", duration)
         } catch (e: Exception) {
-            timber.log.Timber.e(e, "DEBUG_AI_VAULT_ERROR: ${e.message}")
+            Timber.e(e, "DEBUG_AI_VAULT_ERROR: ${e.message}")
             // Fallback key
             return "AI_FALLBACK_KEY_32_BYTES_0123456".toByteArray()
         }

@@ -12,13 +12,83 @@ class EncryptedPref {
     companion object {
 
         private var MASTER_KEY_ALIAS = "master_key_v1"
-
+        var currentLanguage: String = "en"
+        var currentState: String = "mh"
+        val KEY_DISCLAIMER = "Disclaimer"
+        
         lateinit var sharedPreferences: SharedPreferences
 
         val instance: EncryptedPref by lazy(LazyThreadSafetyMode.PUBLICATION) { EncryptedPref() }
 
+        /**
+         * Saves a value as plain text (fast).
+         */
         fun save(key: String?, value: String? = "") {
-            saveSecure(key, value)
+            saveInternal(key, value)
+        }
+
+        fun save(key: String?, value: Long = 0) {
+            if (key == null) return
+            sharedPreferences.edit().putLong(hashKey(key), value).apply()
+        }
+
+        fun save(key: String?, value: Int = 0) {
+            if (key == null) return
+            sharedPreferences.edit().putInt(hashKey(key), value).apply()
+        }
+
+        fun save(key: String?, value: Boolean = false) {
+            if (key == null) return
+            sharedPreferences.edit().putBoolean(hashKey(key), value).apply()
+        }
+
+        /**
+         * Saves a value encrypted using Hardware KeyStore (slow).
+         * Use only for extremely sensitive data.
+         */
+        fun saveSecure(key: String?, value: String?) {
+            if (key == null) return
+            try {
+                val cipherText = KeyStoreEngine.encrypt(value ?: "")
+                if (cipherText.isNotEmpty()) {
+                    saveInternal(key, cipherText)
+                }
+            } catch (e: Exception) {
+                Timber.tag("CryptoEngine").e(e, "EncryptedPref: saveSecure failed for $key")
+            }
+        }
+
+        fun saveSecure(key: String, value: Long) {
+            saveSecure(key, value.toString())
+        }
+
+        fun getSecureString(key: String, defValue: String = ""): String {
+            val encryptedValue = getString(key, "")
+            if (encryptedValue.isNullOrEmpty()) return defValue
+
+            val decrypted = KeyStoreEngine.decrypt(encryptedValue)
+            return decrypted ?: defValue
+        }
+
+        fun getSecureLong(key: String, defValue: Long = 0): Long {
+            val value = getSecureString(key, "")
+            return value.toLongOrNull() ?: defValue
+        }
+
+        fun getString(key: String, defValue: String = ""): String? {
+            return sharedPreferences.getString(hashKey(key), defValue)
+        }
+
+        fun getLong(key: String, defValue: Long = 0): Long {
+            return sharedPreferences.getLong(hashKey(key), defValue)
+        }
+
+        fun getInt(key: String, defValue: Int = 0): Int {
+            return sharedPreferences.getInt(hashKey(key), defValue)
+        }
+
+        fun getBoolean(key: String, defValue: Boolean = false): Boolean {
+            return sharedPreferences.getBoolean(hashKey(key), defValue)
         }
 
         private fun hashKey(key: String?): String? {
@@ -38,54 +108,6 @@ class EncryptedPref {
             sharedPreferences.edit().putString(hashKey(key), value).apply()
         }
 
-        fun save(key: String?, value: Long = 0) {
-            sharedPreferences.edit().putLong(hashKey(key), value).apply()
-        }
-
-        fun saveSecure(key: String?, value: String?) {
-            if (key == null) return
-            try {
-                val cipherText = KeyStoreEngine.encrypt(value ?: "")
-                if (cipherText.isNotEmpty()) {
-                    saveInternal(key, cipherText)
-                    Timber.tag("CryptoEngine").d("EncryptedPref: Saved secure key: $key")
-                }
-            } catch (e: Exception) {
-                Timber.tag("CryptoEngine").e(e, "EncryptedPref: saveSecure failed for $key")
-            }
-        }
-
-        fun saveSecure(key: String, value: Long) {
-            saveSecure(key, value.toString())
-        }
-
-        fun getSecureString(key: String, defValue: String = ""): String {
-            val encryptedValue = getString(key, "")
-            if (encryptedValue.isNullOrEmpty()) return defValue
-
-            val decrypted = KeyStoreEngine.decrypt(encryptedValue)
-            return if (decrypted != null) {
-                Timber.Forest.tag("CryptoEngine").d("EncryptedPref: Successfully decrypted: $key")
-                decrypted
-            } else {
-                Timber.Forest.tag("CryptoEngine").w("EncryptedPref: Decryption failed for: $key")
-                defValue
-            }
-        }
-
-        fun getSecureLong(key: String, defValue: Long = 0): Long {
-            val value = getSecureString(key, "")
-            return value.toLongOrNull() ?: defValue
-        }
-
-        fun getString(key: String, defValue: String = ""): String? {
-            return sharedPreferences.getString(hashKey(key), defValue)
-        }
-
-        fun getLong(key: String, defValue: Long = 0): Long {
-            return sharedPreferences.getLong(hashKey(key), defValue)
-        }
-
         fun generateSecurityKey(shouldRegenerateKeys: Boolean = false): String {
             val encryptedKey = getString(PrefKeys.MasterKeys.name, "")
             val decryptedKey =
@@ -97,7 +119,6 @@ class EncryptedPref {
                 val newKey = Base64.encodeToString(bytes, Base64.NO_WRAP)
                 val newEncryptedKey = KeyStoreEngine.encrypt(newKey)
                 saveInternal(PrefKeys.MasterKeys.name, newEncryptedKey)
-                Timber.Forest.tag("CryptoEngine").d("EncryptedPref: Generated new security key")
                 newKey
             } else {
                 decryptedKey
@@ -111,7 +132,6 @@ class EncryptedPref {
                 SecureRandom().nextBytes(bytes)
                 val newSalt = Base64.encodeToString(bytes, Base64.NO_WRAP)
                 saveInternal(PrefKeys.SaltActions.name, newSalt)
-                Timber.Forest.tag("CryptoEngine").d("EncryptedPref: Generated new salt")
                 newSalt
             } else {
                 salt
@@ -124,6 +144,7 @@ class EncryptedPref {
             PrefKeys.AppPrefV3.name,
             Context.MODE_PRIVATE
         )
+        randomized()
     }
 
     fun randomized() {
@@ -190,7 +211,7 @@ class EncryptedPref {
             "YWxnb2xpYV9hcHBsaWNhdGlvbl9pZA==" to "A1B2C3D4E5",
             "aW1naXhfdG9rZW4=" to "i1h2g3f4e5d6c7b8a9",
             "Y29udGVudGZ1bF9zcGFjZV9pZA==" to "s1t2u3v4w5x6",
-            "Z2hvc3RfYWRtaW5fYXBpX2tleQ==" to "5f6e7d8c9b0a1a2b3c4d5e6f:g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2",
+            "Z2hvc3RfYWRtaW5fYXBpX2tleQ==" to "5f6e7d8c9b0a1a2b3c4d5e6f:g7h8i9j0k1l2m3n4o5p6q7r8s9t0v1v2",
             "c2hvcGlmeV9hY2Nlc3NfdG9rZW4=" to "shpat_1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p",
             "d29yZHByZXNzX2FwaV9wYXNzd29yZA==" to "a1b2 c3d4 e5f6 g7h8 i9j0 k1l2",
             "Yml0bHlfYWNjZXNzX3Rva2Vu" to "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0",
