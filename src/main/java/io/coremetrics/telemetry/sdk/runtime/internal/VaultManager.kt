@@ -19,12 +19,17 @@ class VaultManager(private val context: Context) {
         }
     }
 
-    // @FastNative: eliminates the ArtMethod->JNI stub transition overhead (2-3× faster dispatch).
-    // Safe for API 26+ (minSdk=26). Method may still use JNI freely; GC suspends the thread.
-    @FastNative private external fun mV5xK8pJ(): FloatArray
-    @FastNative private external fun vM2nQ5xR(aiMasterKey: ByteArray): ByteArray
-    @FastNative private external fun getAppSignatureHashRaw(): ByteArray
-    @FastNative private external fun nativeExecutePipeline(assetName: String, rootSeed: ByteArray): String?
+    // @FastNative is safe ONLY for methods that never call back into the JVM (no JNI→Java
+    // callbacks, no managed heap allocations). mV5xK8pJ qualifies: it just copies a static
+    // float table into a new jfloatArray. The other three methods invoke get_sig_hash() or
+    // aes_gcm_decrypt_jni() which call FindClass/NewObject/CallObjectMethod/etc. — all
+    // illegal inside a FastNative context. Using @FastNative there causes ART to put the
+    // thread in the wrong state when those JNI callbacks allocate managed objects, which
+    // allows the GC to corrupt them mid-flight → AEADBadTagException / BAD_DECRYPT.
+    @FastNative private external fun mV5xK8pJ(): FloatArray          // safe: no JNI callbacks
+    private external fun vM2nQ5xR(aiMasterKey: ByteArray): ByteArray // unsafe: calls get_sig_hash
+    private external fun getAppSignatureHashRaw(): ByteArray          // unsafe: calls get_sig_hash
+    private external fun nativeExecutePipeline(assetName: String, rootSeed: ByteArray): String? // unsafe: calls aes_gcm_decrypt_jni
 
     /**
      * PHASE 1: AI Execution + Multi-Factor Fusion → Master Root Seed (32B)

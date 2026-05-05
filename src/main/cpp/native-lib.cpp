@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <android/log.h>
 
-#define LOG_TAG "D"
+#define LOG_TAG "VaultManager"
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 
 // ─── AAssetManager (native asset reading) ─────────────────────────────────
@@ -99,9 +99,18 @@ static void sha256_hash(const uint8_t *data, size_t len, uint8_t out[32]) {
 
 // ─── Root / Jailbreak Detection ────────────────────────────────────────────
 static bool check_root() {
-    if (access("/system/bin/su", F_OK) == 0) return true;
-    if (access("/system/xbin/su", F_OK) == 0) return true;
-    if (access("/data/adb/magisk", F_OK) == 0) return true;
+    if (access("/system/bin/su", F_OK) == 0) {
+        LOGD("SecurityCheck: /system/bin/su detected");
+        return true;
+    }
+    if (access("/system/xbin/su", F_OK) == 0) {
+        LOGD("SecurityCheck: /system/xbin/su detected");
+        return true;
+    }
+    if (access("/data/adb/magisk", F_OK) == 0) {
+        LOGD("SecurityCheck: /data/adb/magisk detected");
+        return true;
+    }
     return false;
 }
 
@@ -114,15 +123,25 @@ static bool check_frida() {
     for (int i = 0; i < 11; i++) d1[i] = (char) (n1[i] ^ 0x5A);
 
     int fd = open("/proc/self/maps", O_RDONLY);
-    if (fd == -1) return false;
+    if (fd == -1) {
+        LOGD("SecurityCheck: Failed to open /proc/self/maps");
+        return false;
+    }
 
     char buf[65536];
     ssize_t n = read(fd, buf, sizeof(buf) - 1);
     close(fd);
-    if (n <= 0) return false;
+    if (n <= 0) {
+        LOGD("SecurityCheck: Failed to read /proc/self/maps");
+        return false;
+    }
     buf[n] = '\0';
 
-    return strstr(buf, d1) != nullptr;
+    if (strstr(buf, d1) != nullptr) {
+        LOGD("SecurityCheck: Frida agent detected in memory maps");
+        return true;
+    }
+    return false;
 }
 
 // ─── Shared helper: SHA-256 of signing cert bytes ─────────────────────────
@@ -135,18 +154,27 @@ static void get_sig_hash(JNIEnv *env, jobject context, uint8_t out[32]) {
     jstring pkgName = (jstring) env->CallObjectMethod(context,
                                                       env->GetMethodID(ctxCls, "getPackageName",
                                                                        "()Ljava/lang/String;"));
-    if (!pm || !pkgName) return;
+    if (!pm || !pkgName) {
+        LOGD("get_sig_hash: Failed to get PM or PkgName");
+        return;
+    }
     jclass pmCls = env->GetObjectClass(pm);
     jobject info = env->CallObjectMethod(pm,
                                          env->GetMethodID(pmCls, "getPackageInfo",
                                                           "(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;"),
                                          pkgName, (jint) 0x40);
-    if (!info) return;
+    if (!info) {
+        LOGD("get_sig_hash: Failed to get PackageInfo");
+        return;
+    }
     jclass infoCls = env->GetObjectClass(info);
     auto arr = (jobjectArray) env->GetObjectField(info,
                                                   env->GetFieldID(infoCls, "signatures",
                                                                   "[Landroid/content/pm/Signature;"));
-    if (!arr || env->GetArrayLength(arr) == 0) return;
+    if (!arr || env->GetArrayLength(arr) == 0) {
+        LOGD("get_sig_hash: No signatures found");
+        return;
+    }
     jobject sig0 = env->GetObjectArrayElement(arr, 0);
     jbyteArray rawSigArr = (jbyteArray) env->CallObjectMethod(sig0,
                                                               env->GetMethodID(
@@ -156,6 +184,10 @@ static void get_sig_hash(JNIEnv *env, jobject context, uint8_t out[32]) {
     jbyte *sigPtr = env->GetByteArrayElements(rawSigArr, nullptr);
     sha256_hash(reinterpret_cast<const uint8_t *>(sigPtr), (size_t) sigLen, out);
     env->ReleaseByteArrayElements(rawSigArr, sigPtr, JNI_ABORT);
+
+    char sigHex[65] = {};
+    for (int i = 0; i < 32; i++) snprintf(sigHex + i * 2, 3, "%02x", out[i]);
+    LOGD("get_sig_hash: Signature Hash: %s", sigHex);
 }
 
 // ─── Read VaultManager.context field from 'thiz' ──────────────────────────
@@ -171,7 +203,10 @@ Java_io_coremetrics_telemetry_sdk_runtime_internal_VaultManager_mV5xK8pJ(
         JNIEnv *env, jobject /* this */) {
 
     jfloatArray result = env->NewFloatArray(64);
-    if (check_frida()) return result;
+    if (check_frida()) {
+        LOGD("VaultManager: mV5xK8pJ blocked by security check");
+        return result;
+    }
 
     static const jfloat combination[64] = {
             0.64769125f, 0.99691355f, 0.51880324f, 0.65811270f,
@@ -199,7 +234,10 @@ extern "C" JNIEXPORT jbyteArray JNICALL
 Java_io_coremetrics_telemetry_sdk_runtime_internal_VaultManager_vM2nQ5xR(
         JNIEnv *env, jobject thiz, jbyteArray aiMasterKey) {
 
-    if (check_frida()) return env->NewByteArray(32);
+    if (check_frida()) {
+        LOGD("VaultManager: vM2nQ5xR blocked by security check");
+        return env->NewByteArray(32);
+    }
 
     jbyte *aiPtr = env->GetByteArrayElements(aiMasterKey, nullptr);
     uint8_t sigBytes[32] = {0};
@@ -320,7 +358,7 @@ Java_io_coremetrics_telemetry_sdk_runtime_internal_VaultManager_nativeExecutePip
     std::string baseName = (dotPos != std::string::npos) ? assetStr.substr(0, dotPos) : assetStr;
     std::string label = std::string(reversedHex) + baseName;
 
-    LOGD("nativeExecutePipeline: asset=%s label_len=%zu", assetStr.c_str(), label.size());
+    LOGD("nativeExecutePipeline: asset=%s label=%s label_len=%zu", assetStr.c_str(), label.size() > 10 ? (label.substr(0, 5) + "..." + label.substr(label.size() - 5)).c_str() : label.c_str(), label.size());
 
     // 4. Open asset
     jclass ctxCls = env->GetObjectClass(context);
@@ -354,6 +392,7 @@ Java_io_coremetrics_telemetry_sdk_runtime_internal_VaultManager_nativeExecutePip
 
     // 6. HKDF → fileKey
     uint8_t fileKey[32];
+    LOGD("nativeExecutePipeline: Salt: %02x%02x%02x%02x...", fileSalt[0], fileSalt[1], fileSalt[2], fileSalt[3]);
     hkdf_sha256(rootSeed, 32, fileSalt, 16,
                 reinterpret_cast<const uint8_t *>(label.c_str()), label.size(), fileKey);
 
@@ -361,11 +400,12 @@ Java_io_coremetrics_telemetry_sdk_runtime_internal_VaultManager_nativeExecutePip
 
     // 7. AES-256-GCM decrypt
     int ctLen = (int) (fileSize - 44);
+    LOGD("nativeExecutePipeline: Decrypting %d bytes", ctLen);
     jbyteArray decArr = aes_gcm_decrypt_jni(env, fileKey, iv, tag, fileData.data() + 28, ctLen);
     secure_wipe(fileKey, 32);
 
     if (!decArr) {
-        LOGD("nativeExecutePipeline: AES-GCM decryption failed");
+        LOGD("nativeExecutePipeline: AES-GCM decryption failed - returned null");
         return nullptr;
     }
 
@@ -382,6 +422,8 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_com_appsbox_allbankbalance_worker_CryptoEngine_decryptAssetNative(
         JNIEnv *env, jobject /*thiz*/, jobject assetManagerObj, jstring assetNameJ,
         jbyteArray rootSeedJ, jstring uuidJ) {
+
+    LOGD("decryptAssetNative: start");
 
     uint8_t rootSeed[32];
     jbyte *rsPtr = env->GetByteArrayElements(rootSeedJ, nullptr);
