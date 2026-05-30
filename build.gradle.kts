@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "io.coremetrics.telemetry"
     compileSdk = 36
+    ndkVersion = "27.0.12077973"
 
     defaultConfig {
         minSdk = 26
@@ -21,7 +22,7 @@ android {
                 cppFlags += "-fno-rtti"
                 cppFlags += "-g0"
                 arguments += "-DANDROID_STL=c++_shared"
-                arguments += "-DANDROID_EXT_LINKER_FLAGS=-Wl,-z,max-page-size=16384"
+                arguments += "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-z,max-page-size=16384"
                 arguments += "-DCMAKE_BUILD_TYPE=Release"
                 arguments += "-DCMAKE_CXX_FLAGS=-Wl,--strip-all"
             }
