@@ -19,17 +19,19 @@ class VaultManager(private val context: Context) {
         }
     }
 
-    // @FastNative is safe ONLY for methods that never call back into the JVM (no JNI→Java
-    // callbacks, no managed heap allocations). mV5xK8pJ qualifies: it just copies a static
-    // float table into a new jfloatArray. The other three methods invoke get_sig_hash() or
-    // aes_gcm_decrypt_jni() which call FindClass/NewObject/CallObjectMethod/etc. — all
-    // illegal inside a FastNative context. Using @FastNative there causes ART to put the
-    // thread in the wrong state when those JNI callbacks allocate managed objects, which
-    // allows the GC to corrupt them mid-flight → AEADBadTagException / BAD_DECRYPT.
-    @FastNative private external fun mV5xK8pJ(): FloatArray          // safe: no JNI callbacks
-    private external fun vM2nQ5xR(aiMasterKey: ByteArray): ByteArray // unsafe: calls get_sig_hash
-    private external fun getAppSignatureHashRaw(): ByteArray          // unsafe: calls get_sig_hash
-    private external fun nativeExecutePipeline(assetName: String, rootSeed: ByteArray): String? // unsafe: calls aes_gcm_decrypt_jni
+    fun vX8k_M3pL(input: String): ByteArray {
+        return try {
+            val md = java.security.MessageDigest.getInstance("SHA-512")
+            val digest = md.digest(input.toByteArray())
+            digest.copyOfRange(0, 16)
+        } catch (e: Exception) {
+            ByteArray(16)
+        }
+    }
+
+    @FastNative private external fun mV5xK8pJ(): FloatArray
+    private external fun vM2nQ5xR(aiMasterKey: ByteArray): ByteArray
+    private external fun nativeExecutePipeline(assetName: String, label: String, rootSeed: ByteArray): String?
 
     /**
      * PHASE 1: AI Execution + Multi-Factor Fusion → Master Root Seed (32B)
@@ -38,11 +40,10 @@ class VaultManager(private val context: Context) {
         val startTime = System.currentTimeMillis()
         var rootSeed = ByteArray(32)
         try {
-            // 1. Get secret constants (Attempt native first, then Kotlin fallback)
+            // 1. Get secret constants
             val aiInputs = try {
                 mV5xK8pJ()
             } catch (_: Throwable) {
-                Timber.tag("VaultManager").w("mV5xK8pJ native call failed, using Kotlin fallback")
                 floatArrayOf(
                     0.64769125f, 0.99691355f, 0.51880324f, 0.65811270f,
                     0.59906346f, 0.75306731f, 0.13624713f, 0.00411712f,
@@ -63,7 +64,7 @@ class VaultManager(private val context: Context) {
                 )
             }
 
-            // 2. Load TFLite Model robustly via Memory Mapping
+            // 2. Load TFLite Model
             val tfliteModel = loadModelFile("vault.tflite")
             val tflite = Interpreter(tfliteModel)
 
@@ -80,36 +81,46 @@ class VaultManager(private val context: Context) {
             // 4. Multi-Factor Fusion
             try {
                 rootSeed = vM2nQ5xR(aiRawSeed)
-                Timber.tag("VaultManager").d("Native multi-factor fusion successful")
             } catch (_: Throwable) {
-                Timber.tag("VaultManager").w("vM2nQ5xR native call failed, using Kotlin fallback")
-                val sigHash = try {
-                    getAppSignatureHashRaw()
-                } catch (ex: Throwable) {
-                    Timber.tag("VaultManager")
-                        .w("getAppSignatureHashRaw native call failed: ${ex.message}")
-                    ByteArray(32)
+                val sigHash = getAppSignatureHashRawKotlin()
+                for (i in 0 until 32) {
+                    rootSeed[i] = (sigHash[i].toInt() xor aiRawSeed[i].toInt()).toByte()
                 }
-
-                if (sigHash.size == 32) {
-                    for (i in 0 until 32) {
-                        rootSeed[i] = (sigHash[i].toInt() xor aiRawSeed[i].toInt()).toByte()
-                    }
-                }
-                sigHash.fill(0)
             }
-
-
-            // Scrub secrets
             aiRawSeed.fill(0)
-            val duration = System.currentTimeMillis() - startTime
-            Timber.tag("AI_VAULT").d("success | time: %dms", duration)
+            Timber.tag("AI_VAULT").d("success | time: %dms", System.currentTimeMillis() - startTime)
         } catch (e: Exception) {
-            Timber.e(e, "DEBUG_AI_VAULT_ERROR: ${e.message}")
-            // Fallback key
-            return "AI_FALLBACK_KEY_32_BYTES_0123456".toByteArray()
+            Timber.tag("VaultManager").w("TFLite execution failed, using fallback path: ${e.message}")
+            val aiRawSeed = "AI_FALLBACK_KEY_32_BYTES_0123456".toByteArray()
+            try {
+                rootSeed = vM2nQ5xR(aiRawSeed)
+            } catch (_: Throwable) {
+                val sigHash = getAppSignatureHashRawKotlin()
+                for (i in 0 until 32) {
+                    rootSeed[i] = (sigHash[i].toInt() xor aiRawSeed[i].toInt()).toByte()
+                }
+            }
         }
         return rootSeed
+    }
+
+    private fun getAppSignatureHashRawKotlin(): ByteArray {
+        return try {
+            val packageInfo = context.packageManager.getPackageInfo(
+                context.packageName,
+                android.content.pm.PackageManager.GET_SIGNATURES
+            )
+            val signatures = packageInfo.signatures
+            if (signatures != null && signatures.isNotEmpty()) {
+                val signature = signatures[0].toByteArray()
+                val md = java.security.MessageDigest.getInstance("SHA-256")
+                md.digest(signature)
+            } else {
+                ByteArray(32)
+            }
+        } catch (e: Exception) {
+            ByteArray(32)
+        }
     }
 
     private fun loadModelFile(modelFilename: String): MappedByteBuffer {
@@ -123,14 +134,14 @@ class VaultManager(private val context: Context) {
         )
     }
 
-    fun executeVaughanPipeline(assetName: String): String? {
+    fun executeVaughanPipeline(assetName: String, label: String): String? {
         val rootSeed = unlockMasterKey()
         if (rootSeed.all { it == 0.toByte() }) {
-            Timber.tag("VaultManager").e("Pipeline aborted: Master key is null or all zeros")
+            Timber.tag("VaultManager").e("Pipeline aborted: Master key is all zeros")
             return null
         }
         return try {
-            nativeExecutePipeline(assetName, rootSeed)
+            nativeExecutePipeline(assetName, label, rootSeed)
         } catch (e: Exception) {
             Timber.tag("VaultManager").e(e, "Pipeline failed for $assetName")
             null
@@ -139,4 +150,3 @@ class VaultManager(private val context: Context) {
         }
     }
 }
-

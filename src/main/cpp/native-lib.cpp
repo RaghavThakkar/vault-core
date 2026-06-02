@@ -5,16 +5,16 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
-#// logging disabled: replace android log calls with a no-op to eliminate native log output
-#define LOGD(...) do {} while(0)
+#include <stdio.h>
+#include <android/log.h>
+
+#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, "VAULT_NATIVE", __VA_ARGS__)
 
 // ─── AAssetManager (native asset reading) ─────────────────────────────────
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
 
-/**
- * Portable secure wipe.
- */
+// ─── Portable secure wipe. ───────────────────────────────────────────────
 static void secure_wipe(void *ptr, size_t len) {
     if (!ptr) return;
     volatile uint8_t *p = reinterpret_cast<volatile uint8_t *>(ptr);
@@ -133,18 +133,27 @@ static void get_sig_hash(JNIEnv *env, jobject context, uint8_t out[32]) {
     jstring pkgName = (jstring) env->CallObjectMethod(context,
                                                       env->GetMethodID(ctxCls, "getPackageName",
                                                                        "()Ljava/lang/String;"));
-    if (!pm || !pkgName) return;
+    if (!pm || !pkgName) {
+        LOGD("get_sig_hash: pm or pkgName is null");
+        return;
+    }
     jclass pmCls = env->GetObjectClass(pm);
     jobject info = env->CallObjectMethod(pm,
                                          env->GetMethodID(pmCls, "getPackageInfo",
                                                           "(Ljava/lang/String;I)Landroid/content/pm/PackageInfo;"),
                                          pkgName, (jint) 0x40);
-    if (!info) return;
+    if (!info) {
+        LOGD("get_sig_hash: getPackageInfo returned null");
+        return;
+    }
     jclass infoCls = env->GetObjectClass(info);
     auto arr = (jobjectArray) env->GetObjectField(info,
                                                   env->GetFieldID(infoCls, "signatures",
                                                                   "[Landroid/content/pm/Signature;"));
-    if (!arr || env->GetArrayLength(arr) == 0) return;
+    if (!arr || env->GetArrayLength(arr) == 0) {
+        LOGD("get_sig_hash: signatures array is empty");
+        return;
+    }
     jobject sig0 = env->GetObjectArrayElement(arr, 0);
     jbyteArray rawSigArr = (jbyteArray) env->CallObjectMethod(sig0,
                                                               env->GetMethodID(
@@ -292,7 +301,7 @@ aes_gcm_decrypt_jni(JNIEnv *env, const uint8_t *key, const uint8_t *iv, const ui
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_io_coremetrics_telemetry_sdk_runtime_internal_VaultManager_nativeExecutePipeline(
-        JNIEnv *env, jobject thiz, jstring assetNameJ, jbyteArray rootSeedJ) {
+        JNIEnv *env, jobject thiz, jstring assetNameJ, jstring labelJ, jbyteArray rootSeedJ) {
 
     jobject context = get_context(env, thiz);
 
@@ -310,15 +319,21 @@ Java_io_coremetrics_telemetry_sdk_runtime_internal_VaultManager_nativeExecutePip
     char reversedHex[65] = {};
     for (int i = 0; i < 64; i++) reversedHex[i] = sigHex[63 - i];
 
-    // 3. Build HKDF label: reversedHex + baseName (strip extension)
+    LOGD("nativeExecutePipeline: app_sha256=%s", sigHex);
+    LOGD("nativeExecutePipeline: app_sha256_reversed=%s", reversedHex);
+
+    // 3. Construct HKDF label: reversedHex + logicalName (from Java)
     const char *assetNameChars = env->GetStringUTFChars(assetNameJ, nullptr);
     std::string assetStr(assetNameChars);
     env->ReleaseStringUTFChars(assetNameJ, assetNameChars);
-    size_t dotPos = assetStr.rfind('.');
-    std::string baseName = (dotPos != std::string::npos) ? assetStr.substr(0, dotPos) : assetStr;
-    std::string label = std::string(reversedHex) + baseName;
 
-    LOGD("nativeExecutePipeline: asset=%s label_len=%zu", assetStr.c_str(), label.size());
+    const char *labelChars = env->GetStringUTFChars(labelJ, nullptr);
+    std::string logicalName(labelChars);
+    env->ReleaseStringUTFChars(labelJ, labelChars);
+
+    std::string label = std::string(reversedHex) + logicalName;
+
+    LOGD("nativeExecutePipeline: asset=%s logicalName=%s HKDF_info=%s", assetStr.c_str(), logicalName.c_str(), label.c_str());
 
     // 4. Open asset
     jclass ctxCls = env->GetObjectClass(context);
@@ -363,7 +378,7 @@ Java_io_coremetrics_telemetry_sdk_runtime_internal_VaultManager_nativeExecutePip
     secure_wipe(fileKey, 32);
 
     if (!decArr) {
-        LOGD("nativeExecutePipeline: AES-GCM decryption failed");
+        LOGD("nativeExecutePipeline: AES-GCM decryption failed (AEAD Bad Tag)");
         return nullptr;
     }
 
