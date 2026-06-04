@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <android/log.h>
 
-#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, "VAULT_NATIVE", __VA_ARGS__)
+#define LOGD(...) ((void)0)
 
 // ─── AAssetManager (native asset reading) ─────────────────────────────────
 #include <android/asset_manager.h>
