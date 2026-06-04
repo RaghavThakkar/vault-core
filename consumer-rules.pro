@@ -18,3 +18,21 @@
 # NIO buffers used by TFLite JNI layer
 -keep class java.nio.Buffer { *; }
 -keep class java.nio.ByteBuffer { *; }
+
+# Strip logging in production via R8
+-assumenosideeffects class android.util.Log {
+    public static *** v(...);
+    public static *** d(...);
+    public static *** i(...);
+    public static *** w(...);
+    public static *** e(...);
+}
+
+-assumenosideeffects class timber.log.** {
+    public static *** v(...);
+    public static *** d(...);
+    public static *** i(...);
+    public static *** w(...);
+    public static *** e(...);
+    public static *** tag(...);
+}
