@@ -7,4 +7,7 @@ val AppJson = Json {
     coerceInputValues = true
     encodeDefaults = true
     prettyPrint = true
+    isLenient = true
+    allowSpecialFloatingPointValues = true
+    explicitNulls = false
 }
