@@ -1,7 +1,6 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.jetbrains.kotlin.android)
-    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -76,7 +75,6 @@ dependencies {
     implementation(libs.timber)
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.core.ktx)
-    implementation(libs.kotlinx.serialization.json)
 }
 
 kotlin {
