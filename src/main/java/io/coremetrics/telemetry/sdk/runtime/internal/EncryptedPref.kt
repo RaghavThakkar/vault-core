@@ -12,8 +12,22 @@ class EncryptedPref {
     companion object {
 
         private var MASTER_KEY_ALIAS = "master_key_v1"
-        var currentLanguage: String = "en"
-        var currentState: String = "mh"
+
+        var currentLanguage: String
+            get() = getString("lang", "en") ?: "en"
+            set(value) = save("lang", value)
+
+        var currentState: String
+            get() = getString("state_code", "")?.takeIf { it.isNotEmpty() } ?: ""
+            set(value) = save("state_code", value)
+
+        var currentStateName: String
+            get() = getString("state_name", "")?.takeIf { it.isNotEmpty() } ?: ""
+            set(value) = save("state_name", value)
+            
+        val isStateSelected: Boolean
+            get() = getBoolean("is_state_selected", false)
+
         val KEY_DISCLAIMER = "Disclaimer"
         
         lateinit var sharedPreferences: SharedPreferences
