@@ -18,12 +18,12 @@ class EncryptedPref {
             set(value) = save("lang", value)
 
         var currentState: String
-            get() = getString("state_code", "")?.takeIf { it.isNotEmpty() } ?: ""
-            set(value) = save("state_code", value)
+            get() = getString("selected_state_code", "")?.takeIf { it.isNotEmpty() } ?: ""
+            set(value) = save("selected_state_code", value)
 
         var currentStateName: String
-            get() = getString("state_name", "")?.takeIf { it.isNotEmpty() } ?: ""
-            set(value) = save("state_name", value)
+            get() = getString("selected_state_name", "")?.takeIf { it.isNotEmpty() } ?: ""
+            set(value) = save("selected_state_name", value)
             
         val isStateSelected: Boolean
             get() = getBoolean("is_state_selected", false)
